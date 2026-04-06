@@ -1,37 +1,63 @@
-# Environment variables (contains secrets - NEVER commit)
+# Credentials and Secrets
+keys.txt
+*.json
+!config.json
 .env
+extra/
 secret/
+
+# EDINET API Cache
+.edinet_cache/
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
 .venv/
-venv/
 env/
-*.egg
+venv/
+ENV/
+prompts/
+data/reports/
+# Debug and Logs
+debug_*
+*.log
+*.bak
+*.htm
+verification_output.txt
+short_verification.txt
+test_*.txt
+__git_tracked.txt
 
-# Data files (user-generated, not source)
-data/bank_rates.json
-data/user_profile.json
+# Streamlit Secrets
+.streamlit/secrets.toml
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# Database
+data/*.db
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Data and Cache
+data/cache/
+data/results.json
+cache/
 
-# OS
+# Verification Artifacts
+result_*.json
+wfa_*.csv
+backtest_result.json
+output_*.txt
+mega_backtest_report*.csv
+mega_sim_summary*.txt
+debug_*.py
+
+# OS-specific
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Personal portfolio data (contains sensitive position info)
+data/portfolio.json
+
+
+verify_*.py
+!verify_predictions.py
+test_import.py
+*.tmp
