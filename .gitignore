@@ -61,3 +61,4 @@ verify_*.py
 !verify_predictions.py
 test_import.py
 *.tmp
+.docs/金利/*

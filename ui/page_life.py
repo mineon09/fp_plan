@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from config import LIFE_DEFAULTS, LIFE_EVENT_PRESETS, SCENARIOS
+from config import LIFE_DEFAULTS, LIFE_DEFAULTS_V2, LIFE_EVENT_PRESETS, SCENARIOS
 from modules.life_planner import calc_life_cashflow, calc_scenarios, life_summary
 from utils.export import save_user_profile, load_user_profile
 
@@ -64,6 +64,134 @@ def render():
         "inflation_rate": LIFE_DEFAULTS["inflation_rate"],
     }
 
+    # ==================== 配偶者詳細 (v2) ====================
+    with st.expander("👫 配偶者詳細設定（ペアローン・個別年金・収入消滅シナリオ）", expanded=False):
+        st.caption("設定すると、配偶者の収入成長・定年・年金・収入消滅をより精緻にシミュレーションできます。")
+        use_v2 = st.checkbox("配偶者詳細を有効にする", value=False, key="life_v2_enabled")
+
+        if use_v2:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**配偶者プロファイル**")
+                spouse_retire_age = st.number_input(
+                    "配偶者定年年齢", 50, 70,
+                    LIFE_DEFAULTS_V2["spouse_retire_age"], key="life_sp_retire")
+                spouse_severance_man = st.number_input(
+                    "配偶者退職金（万円）", 0, 5000,
+                    LIFE_DEFAULTS_V2["spouse_severance_man"], 100, key="life_sp_sev")
+                spouse_income_growth = st.number_input(
+                    "配偶者収入成長率（%/年）", 0.0, 5.0,
+                    LIFE_DEFAULTS_V2["spouse_income_growth_rate"] * 100, 0.1,
+                    format="%.1f", key="life_sp_growth") / 100
+            with col2:
+                st.markdown("**配偶者年金**")
+                spouse_pension_start = st.number_input(
+                    "配偶者年金開始年齢", 60, 75,
+                    LIFE_DEFAULTS_V2["spouse_pension_start_age"], key="life_sp_pen_start")
+                spouse_pension_monthly = st.number_input(
+                    "配偶者年金月額（万円）", 0, 50,
+                    LIFE_DEFAULTS_V2["spouse_pension_monthly_man"], key="life_sp_pen")
+                primary_pension_monthly = st.number_input(
+                    "本人年金月額（万円）", 0, 50,
+                    LIFE_DEFAULTS_V2["primary_pension_monthly_man"], key="life_pr_pen")
+
+            st.markdown("**収入消滅シナリオ（配偶者）**")
+            col3, col4, col5 = st.columns(3)
+            sp_loss_age = col3.number_input(
+                "収入消滅年齢（0=なし）", 0, 70, 0, key="life_sp_loss")
+            sp_resume_age = col4.number_input(
+                "収入復帰年齢（0=復帰なし）", 0, 70, 0, key="life_sp_resume")
+            sp_resume_ratio = col5.slider(
+                "復帰後収入割合（%）", 10, 100, 70, key="life_sp_ratio") / 100
+
+            st.markdown("**ペアローン設定**")
+            pair_enabled = st.checkbox("ペアローン利用", value=False, key="life_pair_enabled")
+            pair_ratio = 0.6
+            if pair_enabled:
+                pair_ratio = st.slider(
+                    "本人の借入負担割合（%）", 10, 90, 60, key="life_pair_ratio") / 100
+                st.info(
+                    f"💡 団信非対称性: 本人死亡 → 本人分（{pair_ratio*100:.0f}%）の債務が消滅。"
+                    f"配偶者分（{(1-pair_ratio)*100:.0f}%）は残ります。"
+                )
+
+            # v2 フィールドを profile に追加
+            profile.update({
+                "spouse_retire_age":           spouse_retire_age,
+                "spouse_severance_man":        spouse_severance_man,
+                "spouse_income_growth_rate":   spouse_income_growth,
+                "spouse_pension_start_age":    spouse_pension_start,
+                "spouse_pension_monthly_man":  spouse_pension_monthly,
+                "primary_pension_monthly_man": primary_pension_monthly,
+                "spouse_income_loss_age":   sp_loss_age if sp_loss_age > 0 else None,
+                "spouse_income_resume_age": sp_resume_age if sp_resume_age > 0 else None,
+                "spouse_income_after_resume_ratio": sp_resume_ratio,
+                "pair_loan_enabled":       pair_enabled,
+                "pair_loan_primary_ratio": pair_ratio,
+            })
+
+    # ==================== 住居コスト自動推計 ====================
+    with st.expander("🏠 住居コスト自動推計（固定資産税・修繕積立金）", expanded=False):
+        st.caption("物件価格から固定資産税と修繕積立金を推計し、ライフイベントに追加します。")
+        use_property_cost = st.checkbox("住居コスト推計を有効にする", value=False, key="life_prop_enabled")
+        prop_extra_events: list[dict] = []
+
+        if use_property_cost:
+            col1, col2 = st.columns(2)
+            prop_price_man = col1.number_input(
+                "物件価格（万円）", 500, 20000,
+                LIFE_DEFAULTS_V2["property_price_man"], 100, key="life_prop_price")
+            is_new_build = col2.checkbox("新築（3年間固定資産税50%軽減）", value=True, key="life_new_build")
+            is_condo = col1.checkbox("マンション（修繕積立金あり）", value=False, key="life_is_condo")
+
+            # 固定資産税推計
+            assessed = prop_price_man * 0.6      # 課税標準額（物件価格×60%目安）
+            annual_tax_full = assessed * 0.014   # 1.4%
+            annual_tax_reduced = annual_tax_full * 0.5  # 新築3年軽減
+
+            if is_new_build:
+                # 3年間は軽減、以降は通常
+                prop_extra_events.append({
+                    "name": "固定資産税（軽減期間）",
+                    "age_start": age_now,
+                    "age_end":   age_now + 2,
+                    "total_man": round(annual_tax_reduced * 3, 1),
+                    "recurring": True,
+                })
+                prop_extra_events.append({
+                    "name": "固定資産税",
+                    "age_start": age_now + 3,
+                    "age_end":   age_now + int(LIFE_DEFAULTS["age_death"] - age_now),
+                    "total_man": round(annual_tax_full * (LIFE_DEFAULTS["age_death"] - age_now - 3), 1),
+                    "recurring": True,
+                })
+            else:
+                prop_extra_events.append({
+                    "name": "固定資産税",
+                    "age_start": age_now,
+                    "age_end":   age_now + int(LIFE_DEFAULTS["age_death"] - age_now),
+                    "total_man": round(annual_tax_full * (LIFE_DEFAULTS["age_death"] - age_now), 1),
+                    "recurring": True,
+                })
+
+            # 修繕積立金（マンションのみ）
+            if is_condo:
+                repair_monthly = LIFE_DEFAULTS_V2["repair_reserve_monthly_man"]
+                prop_extra_events.append({
+                    "name": "修繕積立金",
+                    "age_start": age_now,
+                    "age_end":   age_now + int(LIFE_DEFAULTS["age_death"] - age_now),
+                    "total_man": round(repair_monthly * 12 * (LIFE_DEFAULTS["age_death"] - age_now), 1),
+                    "recurring": True,
+                })
+
+            col_a, col_b = st.columns(2)
+            col_a.metric("年間固定資産税（推計）", f"{annual_tax_full:.1f}万円/年")
+            if is_new_build:
+                col_a.caption(f"新築3年間は {annual_tax_reduced:.1f}万円/年")
+            if is_condo:
+                col_b.metric("修繕積立金", f"{repair_monthly}万円/月")
+
     # ==================== ライフイベント ====================
     with st.expander("📅 ライフイベント設定", expanded=False):
         st.caption("プリセットから選択するか、手動で追加・編集してください。")
@@ -92,6 +220,10 @@ def render():
         )
 
         life_events = edited_events.to_dict("records")
+
+    # 住居コスト推計イベントを結合
+    if prop_extra_events:
+        life_events = life_events + prop_extra_events
 
     # ==================== シナリオ選択 ====================
     show_scenarios = st.checkbox("📊 3シナリオ比較（楽観/ベース/悲観）を表示", value=True)
@@ -134,6 +266,15 @@ def _render_results(scenarios: dict[str, pd.DataFrame], profile: dict, age_now: 
 
         fire_text = f"{summary['fire_age']}歳でFIRE達成" if summary["fire_age"] else "FIRE達成条件未達"
         st.caption(f"💡 {fire_text}")
+
+        # 枯渇詳細（あれば）
+        if summary["depletion_age"]:
+            shortfall_df = base_df[base_df["assets"] < 0].copy()
+            worst_shortfall = shortfall_df["assets"].min() / 10000
+            st.warning(
+                f"⚠️ {summary['depletion_age']}歳で資産が枯渇します。"
+                f"最大不足額: {abs(worst_shortfall):,.0f}万円（{int(shortfall_df.loc[shortfall_df['assets'].idxmin(), 'age'])}歳時点）"
+            )
 
     # 生涯CF推移グラフ
     st.subheader("📈 純資産推移グラフ")

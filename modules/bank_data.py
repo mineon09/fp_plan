@@ -13,7 +13,7 @@ from config import DEFAULT_BANKS, RATE_MIN, RATE_MAX
 
 
 REQUIRED_FIELDS = {"bank_name", "variable_35", "fixed_35"}
-OPTIONAL_FIELDS = {"fixed_10", "has_team_dan", "notes"}
+OPTIONAL_FIELDS = {"fixed_10", "fixed_5", "fixed_3", "has_team_dan", "notes"}
 
 _PROMPT_TEMPLATE = """\
 以下の銀行の住宅ローン金利（{year}年{month}月現在の適用金利）を
@@ -108,7 +108,7 @@ def parse_and_validate(raw_text: str) -> dict[str, Any]:
             continue
 
         # 金利範囲チェック
-        for field in ("variable_35", "fixed_35", "fixed_10"):
+        for field in ("variable_35", "fixed_35", "fixed_10", "fixed_5", "fixed_3"):
             val = bank.get(field)
             if val is not None:
                 try:

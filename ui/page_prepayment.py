@@ -84,6 +84,36 @@ def render():
         if nisa:
             tax_rate = 0.0
 
+        # NISA 枠管理
+        with st.expander("📊 NISA 枠管理", expanded=False):
+            st.caption("新 NISA（2024年〜）の年間枠と残枠を管理します。")
+            col_n1, col_n2 = st.columns(2)
+            with col_n1:
+                nisa_growth_used = st.number_input(
+                    "成長投資枠 使用済（万円）", 0, 240, 0, 10,
+                    help="年間上限 240 万円")
+                nisa_tsumitate_used = st.number_input(
+                    "つみたて投資枠 使用済（万円）", 0, 120, 0, 10,
+                    help="年間上限 120 万円")
+            with col_n2:
+                nisa_growth_rem = 240 - nisa_growth_used
+                nisa_tsumitate_rem = 120 - nisa_tsumitate_used
+                nisa_total_rem = nisa_growth_rem + nisa_tsumitate_rem
+                st.metric("成長投資枠 残枠", f"{nisa_growth_rem}万円 / 240万円")
+                st.metric("つみたて枠 残枠", f"{nisa_tsumitate_rem}万円 / 120万円")
+
+            if nisa and invest_amount_man > nisa_total_rem:
+                st.warning(
+                    f"⚠️ 余剰資金 {invest_amount_man}万円 が今年の NISA 残枠 {nisa_total_rem}万円 を超えています。"
+                    f"超過分 {invest_amount_man - nisa_total_rem}万円 は特定口座（課税）での運用となります。"
+                )
+                # 混合税率で再計算
+                nisa_portion = nisa_total_rem
+                taxable_portion = invest_amount_man - nisa_total_rem
+                blended_tax = (taxable_portion / invest_amount_man) * 20.315
+                st.info(f"💡 混合実効税率: {blended_tax:.2f}%（NISA {nisa_portion}万 + 課税 {taxable_portion}万）")
+                tax_rate = blended_tax
+
         horizon = period_years * 12 - int(prepay_month)
         if horizon > 0:
             result = prepay_vs_invest(

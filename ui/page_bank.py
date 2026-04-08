@@ -81,7 +81,7 @@ def render():
         )
 
         if st.button("💾 このデータで計算する", type="primary"):
-            st.session_state["bank_data"] = edited.to_dict("records")
+            st.session_state["bank_data"] = _from_display_df(edited)
             st.success("銀行データを確定しました。ローン比較タブへ進んでください。")
 
 
@@ -99,6 +99,32 @@ def _apply_parsed(result: dict):
         st.error("データの読み込みに失敗しました。エラーを確認してください。")
 
 
+_DISPLAY_TO_KEY = {
+    "銀行名":      "bank_name",
+    "変動35年(%)": "variable_35",
+    "固定35年(%)": "fixed_35",
+    "固定10年(%)": "fixed_10",
+    "固定5年(%)":  "fixed_5",
+    "固定3年(%)":  "fixed_3",
+    "団信":        "has_team_dan",
+    "備考":        "notes",
+}
+
+
+def _from_display_df(df) -> list[dict]:
+    """日本語カラム名の表示用DataFrameを元の英語キー辞書リストに逆変換する。"""
+    import math
+    def _norm(v):
+        # pandas が None を NaN に変換するため、NaN を None に戻す
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        return v
+    return [
+        {_DISPLAY_TO_KEY.get(k, k): _norm(v) for k, v in row.items()}
+        for row in df.to_dict("records")
+    ]
+
+
 def _to_display_df(banks: list[dict]):
     import pandas as pd
     rows = []
@@ -108,6 +134,8 @@ def _to_display_df(banks: list[dict]):
             "変動35年(%)": b.get("variable_35"),
             "固定35年(%)": b.get("fixed_35"),
             "固定10年(%)": b.get("fixed_10"),
+            "固定5年(%)":  b.get("fixed_5"),
+            "固定3年(%)":  b.get("fixed_3"),
             "団信": b.get("has_team_dan", True),
             "備考": b.get("notes", ""),
         })

@@ -1,0 +1,9 @@
+住信SBIネット銀行：https://www.sbishinseibank.co.jp/retail/housing/api/kakokinri_floating.html
+auじぶん銀行：20260406_hl_nb_loan_amount_plan1_1_sim.csv
+PayPay銀行：https://www.paypay-bank.co.jp/mortgage/interest/index.html
+楽天銀行：https://www.rakuten-bank.co.jp/home-loan/rate/
+三菱UFJ銀行：https://www.bk.mufg.jp/kariru/jutaku/yuuguu/index.html
+みずほ銀行：https://www.mizuhobank.co.jp/loan_housing/housingloancost/index.html
+三井住友銀行：https://www.smbc.co.jp/kojin/jutaku_loan/kinri/
+りそな銀行：https://www.resonabank.co.jp/kojin/jutaku/landing/shinki_c.html?utm_source=google&utm_medium=cpc&utm_campaign=rb_jutaku_shinki_lower_brand&utm_content=000&utm_term=all&waad=Nu0cMEJl&gad_source=1&gad_campaignid=9773219892&gbraid=0AAAAAC0gyf5CZ6xUjMPUJQbZew3dPU7Y3&gclid=Cj0KCQjws83OBhD4ARIsACblj186lsFEyrIiG8tUJx5jkZRQ1TsfpcPZz9XdV13rnFEPcrUW2qeqPhYaArpoEALw_wcB
+フラット35：

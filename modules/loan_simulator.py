@@ -166,9 +166,14 @@ def compare_banks(
     """
     複数銀行のローン比較サマリー DataFrame を返す。
     dan_sin_rate_pct: 団信保険料の実効金利への加算（%）
+    変動35年・固定35年に加え、fixed_3 / fixed_5 がある場合は当初固定型も追加。
     """
     rows = []
     for bank in banks:
+        has_dan = bank.get("has_team_dan", True)
+        dan_add = dan_sin_rate_pct if has_dan else 0.0
+
+        # --- 変動35年 / 固定35年 ---
         for rate_type, rate_key in [("変動35年", "variable_35"), ("固定35年", "fixed_35")]:
             rate = bank.get(rate_key)
             if rate is None:
@@ -183,14 +188,39 @@ def compare_banks(
             total_interest = df["interest"].sum()
             m_payment = df.loc[0, "payment"]
 
-            has_dan = bank.get("has_team_dan", True)
-            effective_rate = rate + (dan_sin_rate_pct if has_dan else 0.0)
-
             rows.append({
                 "銀行名": bank["bank_name"],
                 "金利種別": rate_type,
                 "金利(%)": rate,
-                "実効金利(%)": round(effective_rate, 3),
+                "実効金利(%)": round(rate + dan_add, 3),
+                "月額返済(円)": round(m_payment),
+                "総返済額(円)": round(total_payment),
+                "総利息(円)": round(total_interest),
+            })
+
+        # --- 当初固定型（fixed_3 / fixed_5）+ 変動35年への切替 ---
+        var_rate = bank.get("variable_35")
+        for fixed_n, fixed_key in [(3, "fixed_3"), (5, "fixed_5")]:
+            fixed_n_rate = bank.get(fixed_key)
+            if fixed_n_rate is None or var_rate is None:
+                continue
+            try:
+                fixed_n_rate = float(fixed_n_rate)
+                var = float(var_rate)
+            except (TypeError, ValueError):
+                continue
+
+            df = hybrid_schedule(principal, fixed_n_rate, var, years, fixed_n, bonus_ratio)
+            total_payment = df["payment"].sum()
+            total_interest = df["interest"].sum()
+            m_payment = df.loc[0, "payment"]
+            avg_rate = (fixed_n_rate * fixed_n + var * (years - fixed_n)) / years
+
+            rows.append({
+                "銀行名": bank["bank_name"],
+                "金利種別": f"当初{fixed_n}年固定",
+                "金利(%)": fixed_n_rate,
+                "実効金利(%)": round(avg_rate + dan_add, 3),
                 "月額返済(円)": round(m_payment),
                 "総返済額(円)": round(total_payment),
                 "総利息(円)": round(total_interest),
@@ -198,7 +228,6 @@ def compare_banks(
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        # 月額最安値フラグ
         df["最安値"] = df["月額返済(円)"] == df["月額返済(円)"].min()
     return df
 
@@ -228,3 +257,127 @@ def breakeven_variable_rate(
         return brentq(diff, 0.01, fixed_rate_pct * 3, xtol=1e-5)
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 当初固定型ローン（固定N年 → 変動）
+# ---------------------------------------------------------------------------
+
+def hybrid_schedule(
+    principal: float,
+    fixed_rate_pct: float,
+    variable_rate_pct: float,
+    years: int,
+    fixed_years: int,
+    bonus_ratio: float = 0.0,
+) -> pd.DataFrame:
+    """
+    当初固定型ローンのスケジュール計算。
+    最初の fixed_years は fixed_rate_pct、以降は variable_rate_pct を適用。
+    """
+    phase1 = amortization_schedule(principal, fixed_rate_pct, years, bonus_ratio)
+    phase1_rows = phase1[phase1["month"] <= fixed_years * 12].copy()
+
+    if phase1_rows.empty:
+        return amortization_schedule(principal, variable_rate_pct, years, bonus_ratio)
+
+    balance_after_fixed = float(phase1_rows.iloc[-1]["balance"])
+    remaining_years = years - fixed_years
+
+    if remaining_years <= 0 or balance_after_fixed <= 0:
+        return phase1_rows
+
+    phase2 = amortization_schedule(balance_after_fixed, variable_rate_pct, remaining_years, bonus_ratio)
+    phase2 = phase2.copy()
+    phase2["month"] += fixed_years * 12
+
+    return pd.concat([phase1_rows, phase2], ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# 5年ルール・125%ルール 変動金利シミュレーション
+# ---------------------------------------------------------------------------
+
+def variable_rate_5yr(
+    principal: float,
+    initial_rate_pct: float,
+    years: int,
+    rate_hike_total_pct: float = 0.0,
+    hike_start_year: int = 5,
+) -> pd.DataFrame:
+    """
+    5年ルール・125%ルールに基づく変動金利返済シミュレーション。
+
+    5年ルール  : 月額は 5 年ごとにのみ見直す（金利変動の影響は即時反映されない）
+    125%ルール : 見直し時も前回月額の 125% を上限とする
+
+    Returns DataFrame columns:
+        month, year, rate_pct, payment, interest, principal_repaid,
+        balance, unpaid_interest, unpaid_interest_cumulative
+    """
+    r0 = initial_rate_pct / 100 / 12
+    n_total = years * 12
+
+    if r0 > 0:
+        payment_current = principal * r0 * (1 + r0) ** n_total / ((1 + r0) ** n_total - 1)
+    else:
+        payment_current = principal / n_total
+
+    balance = principal
+    unpaid_cum = 0.0
+    rows = []
+
+    for month in range(1, n_total + 1):
+        year = (month - 1) // 12 + 1
+        elapsed_years = year - 1
+
+        # 現在の金利（線形上昇モデル）
+        if elapsed_years < hike_start_year:
+            current_rate_pct = initial_rate_pct
+        else:
+            progress = min(
+                (elapsed_years - hike_start_year) / max(years - hike_start_year, 1),
+                1.0,
+            )
+            current_rate_pct = initial_rate_pct + rate_hike_total_pct * progress
+
+        r = current_rate_pct / 100 / 12
+
+        # 5 年ごとに月額見直し（month=1 は除く）
+        if month > 1 and (month - 1) % 60 == 0 and balance > 0:
+            remaining = n_total - month + 1
+            if r > 0:
+                new_payment = balance * r * (1 + r) ** remaining / ((1 + r) ** remaining - 1)
+            else:
+                new_payment = balance / remaining
+            payment_current = min(new_payment, payment_current * 1.25)
+
+        interest = balance * r
+
+        if payment_current <= interest:
+            # 元本が減らない（逆アモチ）→ 未払い利息が蓄積
+            unpaid = interest - payment_current
+            unpaid_cum += unpaid
+            principal_repaid = 0.0
+        else:
+            unpaid = 0.0
+            principal_repaid = payment_current - interest
+
+        balance = max(balance - principal_repaid, 0.0)
+
+        rows.append({
+            "month": month,
+            "year": year,
+            "rate_pct": round(current_rate_pct, 4),
+            "payment": payment_current,
+            "interest": interest,
+            "principal_repaid": principal_repaid,
+            "balance": balance,
+            "unpaid_interest": unpaid,
+            "unpaid_interest_cumulative": unpaid_cum,
+        })
+
+        if balance <= 0 and unpaid_cum <= 0:
+            break
+
+    return pd.DataFrame(rows)

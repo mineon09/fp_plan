@@ -10,6 +10,74 @@ import numpy as np
 from config import LIFE_DEFAULTS, SCENARIOS
 
 
+# ---------------------------------------------------------------------------
+# 収入計算ヘルパー（v1 / v2 兼用）
+# ---------------------------------------------------------------------------
+
+def _calc_income(p: dict, age: int, age_now: int) -> float:
+    """
+    年間収入を計算する。v1（フラット）・v2（配偶者個別）の両スキーマに対応。
+
+    v2 判定: p に 'spouse_retire_age' が存在する場合は v2 モード。
+    v2 では配偶者の成長率・定年・退職金・年金を個別に管理する。
+    """
+    years_elapsed = age - age_now
+
+    # ---- 本人収入 ----
+    retire_age = p["retire_age"]
+    if age < retire_age:
+        primary = p["income_man"] * 10000 * (1 + p["income_growth_rate"]) ** years_elapsed
+    elif age == retire_age:
+        primary = p.get("severance_pay_man", 0) * 10000
+    else:
+        primary = 0.0
+
+    # 本人年金
+    pension_start = p.get("pension_start_age", retire_age)
+    if age >= pension_start:
+        # v2: primary_pension_monthly_man が個別に存在する場合はそちらを優先
+        if "primary_pension_monthly_man" in p:
+            primary += p["primary_pension_monthly_man"] * 10000 * 12
+        else:
+            # v1: pension_monthly_man を 2 人分として使用（配偶者側で重複加算しない）
+            primary += p["pension_monthly_man"] * 10000 * 12
+
+    # ---- 配偶者収入 ----
+    # v2 モード: spouse_retire_age が存在する
+    is_v2 = "spouse_retire_age" in p
+    spouse_retire = p.get("spouse_retire_age", retire_age)
+    spouse_growth = p.get("spouse_income_growth_rate", 0.0)
+
+    loss_age   = p.get("spouse_income_loss_age")
+    resume_age = p.get("spouse_income_resume_age")
+    resume_ratio = p.get("spouse_income_after_resume_ratio", 1.0)
+
+    if age < spouse_retire:
+        base_spouse = p.get("income_spouse_man", 0) * 10000
+        if is_v2 and spouse_growth > 0:
+            base_spouse *= (1 + spouse_growth) ** years_elapsed
+        # 収入消滅シナリオ
+        if loss_age and age >= loss_age:
+            if resume_age and age >= resume_age:
+                spouse = base_spouse * resume_ratio
+            else:
+                spouse = 0.0
+        else:
+            spouse = base_spouse
+    elif age == spouse_retire:
+        spouse = p.get("spouse_severance_man", 0) * 10000
+    else:
+        spouse = 0.0
+
+    # 配偶者年金（v2 のみ個別管理）
+    if is_v2 and "spouse_pension_monthly_man" in p:
+        spouse_pension_start = p.get("spouse_pension_start_age", 65)
+        if age >= spouse_pension_start:
+            spouse += p["spouse_pension_monthly_man"] * 10000 * 12
+
+    return primary + spouse
+
+
 def calc_life_cashflow(
     profile: dict,
     loan_schedule: pd.DataFrame | None,
@@ -18,7 +86,7 @@ def calc_life_cashflow(
     """
     生涯キャッシュフロー年次計算。
 
-    profile keys (万円/年 / 割合): 全て LIFE_DEFAULTS 参照。
+    profile keys (万円/年 / 割合): 全て LIFE_DEFAULTS 参照。v2 キーは LIFE_DEFAULTS_V2 参照。
     loan_schedule: loan_simulator の amortization_schedule (月次) または None。
     life_events: [{"name": str, "age_start": int, "age_end": int, "total_man": float, "recurring": bool}]
 
@@ -56,20 +124,8 @@ def calc_life_cashflow(
     for age in range(age_now, age_death + 1):
         years_elapsed = age - age_now
 
-        # 収入
-        if age < p["retire_age"]:
-            income = (
-                p["income_man"] * 10000 * (1 + p["income_growth_rate"]) ** years_elapsed
-                + p["income_spouse_man"] * 10000
-            )
-        elif age == p["retire_age"]:
-            income = p["severance_pay_man"] * 10000
-        else:
-            income = 0.0
-
-        # 年金
-        if age >= p["pension_start_age"]:
-            income += p["pension_monthly_man"] * 10000 * 12
+        # 収入（v1/v2 兼用ヘルパー）
+        income = _calc_income(p, age, age_now)
 
         # 支出（インフレ考慮）
         if age < p["retire_age"]:
